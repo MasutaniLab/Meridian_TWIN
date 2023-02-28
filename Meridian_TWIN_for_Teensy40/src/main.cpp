@@ -9,7 +9,7 @@
 // 220828 サーボからの受信が-1(タイムアウト)の時、前に取得した情報を使用する（データ飛びや表示のブレを防止）
 // 220828 SERVO_NUM_L, SERVO_NUM_R に左右の接続サーボ数の登録を設定
 // 220828 左右の接続サーボ数の多い方をservo_numとし、サーボ送信命令も左右交互に実行するよう改定
-
+// 230228 SDカードからモーション読み出し機能,モーション再生機能の追加
 //================================================================================================================
 //---- Teensy4.0 の 配 線 / ピンアサイン ----------------------------------------------------------------------------
 //================================================================================================================
@@ -112,7 +112,7 @@
 //================================================================================================================
 
 /* 頻繁に変更するであろう#DEFINE */
-#define VERSION "Meridian_TWIN_for_Teensy_2022.08.28" // バージョン表示
+#define VERSION "Meridian_TWIN_for_Teensy_2022.08.28_yoshida" // バージョン表示
 #define FRAME_DURATION 10                             // 1フレームあたりの単位時間（単位ms）
 
 /* シリアルモニタリング切り替え */
@@ -255,6 +255,9 @@ int s_servo_pos_L[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // 15要素
 int s_servo_pos_R[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // 15要素
 int r_servo_pos_L[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // 15要素
 int r_servo_pos_R[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // 15要素
+
+int store_motion[20][20][31];//SDカードのモーションを格納する配列 //PKT
+int move_btn[20]; //モーション再生に必要なボタンデータ値
 
 /* 各サーボのマウントありなし */
 int idl_mt[15]; // L系統
@@ -461,6 +464,20 @@ int Krs2HfDeg(int krs, int n, int pn)
 // | 引数　　　:  なし.
 // | 戻り値　　:  なし.
 // +----------------------------------------------------------------------
+int pos_move(int krs, int n, int pn)
+{
+    float x = (krs - 7500 - n) * 3.375 * pn;
+    return int(x);
+}
+
+// +----------------------------------------------------------------------
+// | 関数名　　:  setupIMUAHRS()
+// +----------------------------------------------------------------------
+// | 機能     :  MPU6050,BNO055等の初期設定を行う.　IMUAHRS_MOUNTで機種判別.
+// | 　　　　　:  0:off, 1:MPU6050(GY-521), 2:MPU9250(GY-6050/GY-9250) 3:BNO055
+// | 引数　　　:  なし.
+// | 戻り値　　:  なし.
+// +----------------------------------------------------------------------
 void setupIMUAHRS()
 {
     if (IMUAHRS_MOUNT == 1) // MPU6050
@@ -645,11 +662,37 @@ void joypad_read()
     }
 }
 
+//Arduinoで文字列をカンマなどの区切り文字で分割するsplit関数 //PKT
+String cmds[31] = {"\0"}; // 分割された文字列を格納する配列 
+int motion_setup[30] = {"\0"}; //ボタン情報をintで格納
+String motion_setup_cmd[30]; //モーション名.TXTをStringで格納
+int motion_setup_line_count = 0; //motion_setup.TXTのモーションを格納する
+int split(String data, char delimiter, String *dst, int arraySize)
+{
+    int index = 0;
+    dst[0]="";
+    // int arraySize = (sizeof(data)/sizeof((data)[0])); 
+    int datalength = data.length();
+    for (int i = 0; i < datalength; i++) {
+        char tmp = data.charAt(i);
+        if ( tmp == delimiter ) {
+            index++;
+            dst[index]="";
+            if ( index > (arraySize - 1)) return -1;
+        }
+        else dst[index] += tmp;
+    }
+    return (index + 1);
+}
+
+
+
 //================================================================================================================
 //---- セ ッ ト ア ッ プ -------------------------------------------------------------------------------------------
 //================================================================================================================
 void setup()
 {
+    
     //-------------------------------------------------------------------------
     //---- サ ー ボ 設 定  -----------------------------------------------------
     //-------------------------------------------------------------------------
@@ -903,7 +946,198 @@ void setup()
     merc = merc + 3500;
     Serial.println();
     Serial.println("Ready. ");
+
+
+// // //SD カードのモーションを格納する配列 //PKT
+// // int store_motion[10][31];
+// // /* PKT SDcard-read*/
+// delay(100);
+// File file;
+// Serial.println("");
+// Serial.print("SDcard-read: ");
+// Serial.println("file open");
+// Serial.println("");
+// delay(100);
+// if (!SD.begin(CHIPSELECT_SD))
+// {
+//     Serial.println(F("SD CARD FAILED, OR NOT PRESENT!"));
+//     while (1); // don't do anything more:
+// }
+// // open file for reading
+// file = SD.open("okiagari.txt", FILE_READ);
+// if (file)
+// {
+// int line_count = 0;
+//     while (file.available())
+//     {
+//     String line = file.readStringUntil('\n'); // \n character is discarded from buffer
+//     //line_count++;
+//     Serial.print("pose : ");
+//     Serial.print(line_count);
+//     Serial.print(" / ");
+//     // Serial.println(line);
+//     // 文字列
+//     String cmd = line;
+//     // 分割数 = 分割処理(文字列, 区切り文字, 配列)
+//     int index = split(cmd, ',', cmds,sizeof(cmds)/sizeof((cmds)[0]));
+//     // Serial.print(index);
+//     // 結果表示
+//         for(int i = 0; i < index; i++)
+//         {
+//         // Serial.print(cmds[i]);
+//         // Serial.print(", ");
+//         store_motion[line_count][i] = cmds[i].toInt();
+//         Serial.print(store_motion[line_count][i]);
+//         Serial.print(", ");
+//         }
+//     Serial.println( );
+//     line_count++;
+//     }
+// file.close();
+// }
+// else
+// {
+//     Serial.println(F("SD Card: error on opening file"));
+// }
+// Serial.println("");
+// Serial.print("SDcard-read: ");
+// Serial.println("file close");
+// Serial.println("");
+
+// //SDカードのモーションを格納する配列 //PKT
+//     int store_motion[10][31];
+
+    // /* PKT SDcard-read*/
+    delay(100);
+    File file;
+    Serial.println("");
+    Serial.print("SDcard-read: ");
+    Serial.println("motion_setup.txt open");
+    Serial.println("");
+    delay(100);
+
+    
+
+    if (!SD.begin(CHIPSELECT_SD))
+    {
+    Serial.println(F("SD CARD FAILED, OR NOT PRESENT!"));
+    while (1); // don't do anything more:
+    }
+
+        // open file for reading
+        file = SD.open("motion_setup.txt", FILE_READ);
+        if (file)
+        {
+            int line_count = 0;
+            while (file.available())
+            {
+                String line = file.readStringUntil('\n');  // \n character is discarded from buffer
+                //line_count++;
+                Serial.print("motion_setup_line_count : ");
+                Serial.print(line_count);
+                Serial.print(" / ");
+                // 文字列
+                String cmd = line;
+                // 分割数 = 分割処理(文字列, 区切り文字, 配列) 
+                int index = split(cmd, ',', cmds,sizeof(cmds)/sizeof((cmds)[0]));
+                // Serial.print(index);
+                // 結果表示
+
+                // motion_setup[line_count] = cmds[0]; //ボタン情報をStringで格納
+                move_btn[line_count] = cmds[0].toInt(); //ボタン情報をintで格納
+                motion_setup_cmd[line_count] = cmds[1]; //モーション名.TXT(String)で格納
+
+                
+
+                Serial.print(motion_setup[line_count]);
+                Serial.print(", ");
+                Serial.print(motion_setup_cmd[line_count]);
+                Serial.println( );
+                line_count++;
+            }
+            motion_setup_line_count = line_count;
+            file.close();
+            
+        }
+        else
+        {
+            Serial.println(F("SD Card: error on opening file"));
+        }
+        Serial.println("");
+        Serial.println("motion_setup.txt close");
+        Serial.println("");
+        
+        //モーションを配列に格納する
+        for(int j = 0; j <= motion_setup_line_count; j++)
+        {
+            // open file for reading
+            // file = SD.open(motion_setup_cmd[j], FILE_READ);
+            file = SD.open(motion_setup_cmd[j].c_str(), FILE_READ);
+            Serial.print("motion_setup : ");
+            Serial.println(motion_setup_cmd[j]);
+
+
+            if (file)
+            {
+                int line_count = 0;
+                while (file.available())
+                {
+                    String line = file.readStringUntil('\n');  // \n character is discarded from buffer
+                    //line_count++;
+                    Serial.print("pose : ");
+                    Serial.print(line_count);
+                    Serial.print(" / ");
+                    //   Serial.println(line);
+                        // 文字列
+                        String cmd = line;
+                        // 分割数 = 分割処理(文字列, 区切り文字, 配列) 
+                        int index = split(cmd, ',', cmds,sizeof(cmds)/sizeof((cmds)[0]));
+                        // Serial.print(index);
+                        // 結果表示
+                        for(int i = 0; i < index; i++)
+                        {
+                            // Serial.print(cmds[i]);
+                            // Serial.print(", ");
+                        store_motion[j][line_count][i] = cmds[i].toInt();
+                            
+                            Serial.print(store_motion[j][line_count][i]);
+                            Serial.print(", ");
+                        }
+                        Serial.println( );
+                        line_count++;
+                }
+                file.close();
+                
+            }
+            else
+            {
+                Serial.println(F("SD Card: error on opening file"));
+            }
+            Serial.println("");
+            Serial.print("SDcard-read: ");
+            Serial.println("file close");
+            Serial.println("");
+        }
+        
 }
+
+
+/* PKT */
+    int motion;
+    double pose_step = 0;
+    
+    int pos_NB=-1;
+    
+    double pose_l_hokan[30];
+    double pose_r_hokan[30];
+    int s_servo_pos_L_hokan[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    int s_servo_pos_R_hokan[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    double pose_l_target[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    double pose_r_target[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    double pose_l_currene[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    double pose_r_currene[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    double pose[] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 1};
 
 //================================================================================================================
 //---- M A I N  L O O P -----------------------------------------------------------------------------------------
@@ -911,6 +1145,12 @@ void setup()
 void loop()
 {
 
+//サーボトルクフラグON
+    for (int i = 0; i < 15; i++)
+    {
+        s_spi_meridim.sval[i * 2 + 20] = 1; 
+        s_spi_meridim.sval[i * 2 + 50] = 1;        // 仮にここでは各サーボのコマンドを脱力&ポジション指示(0)に設定
+    }
     //////// < 1 > E S P 3 2 と の S P I に よ る 送 受 信 処 理  /////////////////////////
 
     // @[1-1] ESP32とのSPI送受信の実行
@@ -1073,27 +1313,140 @@ void loop()
     // @[7-3] Teensyによる次回動作の計算
 
     // リモコンの左十字キー左右で首を左右にふるサンプル
-    if (r_spi_meridim.sval[15] == 32)
+   //PKT++
+    if(pose_step > pose[30]*10-1)
     {
-        s_servo_pos_L[0] = HfDeg2Krs(-3000, idl_trim[0], idl_cw[0]); //
+        pos_NB ++;
+        pose_step=0;
+        
+        for (int i = 0; i<15;i++)
+        {
+            pose[i] = store_motion[motion][pos_NB][i];
+            pose[i+15] = store_motion[motion][pos_NB][i+15];
+
+            //pose_l_currene[] poseが切り替わった初回に現在の関節角度を格納
+            pose_l_currene[i] = idl_d[i] / 100; //idl_d[]サーボから得た現在の角度deg*100
+            pose_r_currene[i] = idr_d[i] / 100;
+
+        }
+        pose[30] = store_motion[motion][pos_NB][30];
+        if(pose[30] == 0)
+        {
+        pos_NB=-1;
+        Serial.println("pose RISETTO");
+        }
     }
-    else if (r_spi_meridim.sval[15] == 128)
+    
+
+    if(pos_NB == -1)
     {
-        s_servo_pos_L[0] = HfDeg2Krs(3000, idl_trim[0], idl_cw[0]); //
+        pose_step=0;
+        pos_NB=0;
+        for (int i = 0; i < motion_setup_line_count; i++)
+        {
+            motion = i;
+            if (r_spi_meridim.sval[15] == move_btn[i])
+            {
+                
+                for (int u = 0; u<15;u++)
+                {
+                    pose[u] = store_motion[motion][pos_NB][u];
+                    pose[u+15] = store_motion[motion][pos_NB][u+15];
+                }
+                pose[30] = store_motion[motion][pos_NB][30];
+                break;
+            }
+        }
     }
+
+    //PKT++
+    if(pose_step > pose[30]*10-1)
+    {
+        pos_NB ++;
+        pose_step=0;
+        
+        for (int i = 0; i<15;i++)
+        {
+            pose[i] = store_motion[motion][pos_NB][i];
+            pose[i+15] = store_motion[motion][pos_NB][i+15];
+
+            //pose_l_currene[] poseが切り替わった初回に現在の関節角度を格納
+            pose_l_currene[i] = idl_d[i] / 100; //idl_d[]サーボから得た現在の角度deg*100
+            pose_r_currene[i] = idr_d[i] / 100;
+
+        }
+        pose[30] = store_motion[motion][pos_NB][30];
+
+    }
+
+    for (int i = 0; i<15;i++)
+    {
+       
+        //pose_l_hokan[] ( 目標にする関節角度 - 現在の関節角度 ) / step で1周期ごとの補間値を格納
+        pose_l_hokan[i] = pose[i]    - pose_l_currene[i]; //pose モーションで目指す目標角度deg
+        pose_r_hokan[i] = pose[i+15] - pose_r_currene[i];
+
+        pose_l_hokan[i] = pose_l_hokan[i] / (pose[30]*10); //pose[30]目標角度までのstep＝0.1ｓ
+        pose_r_hokan[i] = pose_r_hokan[i] / (pose[30]*10);
+    }
+        
+    pose_step ++;
+    
+    Serial.println("store_motion : ");
+    for (int i = 0; i<15;i++)
+    {
+        Serial.print(pose[i]);Serial.print(",");
+    }
+    Serial.println("");
+
+    for (int i = 0; i<15;i++)
+    {
+        Serial.print(pose[i+15]);Serial.print(",");
+    }
+    Serial.println("");
+    Serial.print("pose[30] : ");Serial.print(pose[30]);Serial.println(",");
+    
+            
+        
+    Serial.print("  motion : ");
+    Serial.print(motion);
+    Serial.print(" | pos_NB = ");
+    Serial.println(pos_NB);
+    Serial.print("  コントローラの値 : ");
     Serial.println(r_spi_meridim.sval[15]);
 
-    /*
-    if (s_spi_meridim.sval[15] == 32)
+    int pose_step2 = pose_step/10+1;
+    Serial.print(" pose_step ");
+    Serial.print(pose[30]);
+    Serial.print(" / ");
+    Serial.println(pose_step2);
+
+
+    Serial.println();
+    
+    for (int i = 0; i<15;i++)
     {
-        s_servo_pos_L[0] = HfDeg2Krs(-3000, idl_trim[0], idl_cw[0]); //
+        if(motion == 0)
+        {
+            //ホームポジションの場合補間はしない
+            pose_l_target[i] = pose[i];
+            pose_r_target[i] = pose[i+15];
+        }
+        else
+        {
+        pose_l_target[i] = pose_l_currene[i] + pose_l_hokan[i] * ( pose_step + 1 );//pose_l_target[]サーボに渡す目標値
+        pose_r_target[i] = pose_r_currene[i] + pose_r_hokan[i] * ( pose_step + 1 );
+        }
+
+        s_servo_pos_L[i] = HfDeg2Krs(pose_l_target[i]*100,idl_trim[i],idl_cw[i]);//pkt
+        s_servo_pos_R[i] = HfDeg2Krs(pose_r_target[i]*100,idr_trim[i],idr_cw[i]);//pkt
+
+        
     }
-    else if (s_spi_meridim.sval[15] == 128)
-    {
-        s_servo_pos_L[0] = HfDeg2Krs(3000, idl_trim[0], idl_cw[0]); //
-    }
-    Serial.println(r_spi_meridim.sval[15]);
-    */
+    
+    
+    
+
     // @[7-4] センサーデータによる動作へのフィードバック加味
 
     // @[7-5] 移動時間の決定
